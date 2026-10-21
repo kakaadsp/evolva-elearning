@@ -173,14 +173,14 @@ export default function AdminUsersPage() {
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
           <div className="flex gap-3 flex-wrap">
             {/* Search */}
-            <div className="relative">
+            <div className="relative w-full sm:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
                 type="text"
                 placeholder="Cari nama atau email..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="input-field pl-9 w-56"
+                className="input-field input-with-leading-icon w-full"
                 id="search-users"
               />
             </div>
@@ -338,7 +338,7 @@ export default function AdminUsersPage() {
                     type="text"
                     value={formData.full_name}
                     onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                    className="input-field pl-10"
+                    className="input-field input-with-leading-icon"
                     placeholder="Nama lengkap pengguna"
                     id="input-fullname"
                   />
@@ -356,7 +356,7 @@ export default function AdminUsersPage() {
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="input-field pl-10"
+                    className="input-field input-with-leading-icon"
                     placeholder="email@institusi.ac.id"
                     disabled={!!editUser}
                     id="input-email"
@@ -376,7 +376,7 @@ export default function AdminUsersPage() {
                       type="password"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="input-field pl-10"
+                      className="input-field input-with-leading-icon"
                       placeholder="Min. 8 karakter"
                       id="input-password"
                     />

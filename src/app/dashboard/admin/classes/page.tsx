@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
+import AddStudents from "@/components/classes/AddStudents";
 
 interface KelasData {
   id: string;
@@ -174,6 +175,7 @@ export default function AdminClassesPage() {
                     {c.is_active ? "Nonaktif" : "Aktifkan"}
                   </button>
                 </div>
+                <AddStudents classId={c.id} />
               </div>
             ))
           ) : (

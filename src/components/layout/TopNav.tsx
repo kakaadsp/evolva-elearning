@@ -1,6 +1,8 @@
 "use client";
 
 import { Bell, Search } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 interface TopNavProps {
   title: string;
@@ -8,6 +10,23 @@ interface TopNavProps {
 }
 
 export default function TopNav({ title, breadcrumbs }: TopNavProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(searchParams.get("search") ?? "");
+
+  useEffect(() => {
+    setQuery(searchParams.get("search") ?? "");
+  }, [searchParams]);
+
+  function handleSearch(value: string) {
+    setQuery(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value.trim()) params.set("search", value.trim());
+    else params.delete("search");
+    router.replace(`${pathname}${params.toString() ? `?${params}` : ""}`);
+  }
+
   return (
     <header className="topnav">
       <div className="flex flex-col gap-0.5">
@@ -31,11 +50,10 @@ export default function TopNav({ title, breadcrumbs }: TopNavProps) {
 
       {/* Right controls */}
       <div className="flex items-center gap-3">
-        {/* Search (decorative) */}
-        <div className="hidden md:flex items-center gap-2 bg-neutral-100 rounded-xl px-3 py-2 w-48">
+        <label className="hidden md:flex items-center gap-2 bg-neutral-100 rounded-xl px-3 py-2 w-56 focus-within:ring-2 focus-within:ring-primary-200">
           <Search className="w-4 h-4 text-neutral-400" />
-          <span className="text-sm text-neutral-400">Cari...</span>
-        </div>
+          <input value={query} onChange={(event) => handleSearch(event.target.value)} placeholder="Cari..." className="w-full bg-transparent outline-none text-sm text-neutral-700 placeholder:text-neutral-400" aria-label={`Cari di halaman ${title}`} />
+        </label>
 
         {/* Notifications */}
         <button

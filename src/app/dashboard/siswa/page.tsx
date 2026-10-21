@@ -231,12 +231,13 @@ export default async function SiswaDashboard() {
               </div>
               <div className="space-y-2">
                 {classes && classes.length > 0 ? (
-                  (classes as any[]).map((c) => {
+                  (classes as any[]).map((c, index) => {
                     const kelas = Array.isArray(c.kelas) ? c.kelas[0] : c.kelas;
+                    if (!kelas?.id) return null;
                     return (
                       <Link
-                        key={kelas?.id}
-                        href={`/dashboard/siswa/classes/${kelas?.id}`}
+                        key={c.kelas_id ?? kelas.id ?? `class-${index}`}
+                        href={`/dashboard/siswa/classes/${kelas.id}`}
                         className="flex items-center gap-3 p-3 rounded-xl hover:bg-neutral-50 transition-colors group"
                       >
                         <div className="w-9 h-9 rounded-xl bg-ai-50 flex items-center justify-center shrink-0">

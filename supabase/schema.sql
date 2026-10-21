@@ -22,23 +22,54 @@ CREATE TABLE public.profiles (
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- Helper SECURITY DEFINER menghindari recursive RLS saat policy profiles
+-- perlu memeriksa apakah pengguna saat ini adalah admin.
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_guru_or_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role IN ('guru', 'admin')
+  );
+$$;
+
+CREATE POLICY "Guru and admin can view student profiles" ON public.profiles
+  FOR SELECT USING (role = 'siswa' AND public.is_guru_or_admin());
+
 -- Profiles policies
 CREATE POLICY "Users can view their own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
 
 CREATE POLICY "Admin can view all profiles" ON public.profiles
   FOR SELECT USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 CREATE POLICY "Admin can insert profiles" ON public.profiles
   FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 CREATE POLICY "Admin can update profiles" ON public.profiles
   FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- Auto-create profile trigger
@@ -97,14 +128,6 @@ CREATE TRIGGER kelas_updated_at
   BEFORE UPDATE ON public.kelas
   FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- Kelas policies
-CREATE POLICY "Members can view their classes" ON public.kelas
-  FOR SELECT USING (
-    EXISTS (SELECT 1 FROM public.kelas_members WHERE kelas_id = id AND user_id = auth.uid())
-    OR created_by = auth.uid()
-    OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-  );
-
 CREATE POLICY "Guru can create classes" ON public.kelas
   FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('guru', 'admin'))
@@ -131,22 +154,37 @@ CREATE TABLE public.kelas_members (
 
 ALTER TABLE public.kelas_members ENABLE ROW LEVEL SECURITY;
 
+CREATE OR REPLACE FUNCTION public.is_class_teacher(p_kelas_id UUID)
+RETURNS BOOLEAN LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM public.kelas_members WHERE kelas_id = p_kelas_id AND user_id = auth.uid() AND role = 'guru');
+$$;
+
 CREATE POLICY "Members can view class membership" ON public.kelas_members
   FOR SELECT USING (
     user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM public.kelas_members km2
-      WHERE km2.kelas_id = kelas_id AND km2.user_id = auth.uid()
-    )
-    OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    OR public.is_class_teacher(kelas_id)
+    OR public.is_admin()
   );
 
 CREATE POLICY "Guru and admin can manage members" ON public.kelas_members
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.kelas_members km
-      WHERE km.kelas_id = kelas_id AND km.user_id = auth.uid() AND km.role = 'guru'
-    )
+  FOR ALL
+  USING (
+    public.is_admin()
+    OR public.is_class_teacher(kelas_id)
+  )
+  WITH CHECK (
+    public.is_admin()
+    OR (user_id = auth.uid() AND role = 'guru')
+    OR public.is_class_teacher(kelas_id)
+  );
+
+-- Kelas policy yang bergantung pada tabel kelas_members harus dibuat
+-- setelah tabel kelas_members tersedia.
+CREATE POLICY "Members can view their classes" ON public.kelas
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM public.kelas_members WHERE kelas_id = id AND user_id = auth.uid())
+    OR created_by = auth.uid()
     OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
@@ -183,7 +221,12 @@ CREATE POLICY "Class members can view available modules" ON public.modul_pembela
   );
 
 CREATE POLICY "Guru can manage modules" ON public.modul_pembelajaran
-  FOR ALL USING (
+  FOR ALL
+  USING (
+    created_by = auth.uid()
+    OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('guru', 'admin'))
+  )
+  WITH CHECK (
     created_by = auth.uid()
     OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('guru', 'admin'))
   );

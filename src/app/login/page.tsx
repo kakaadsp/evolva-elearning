@@ -47,13 +47,19 @@ export default function LoginPage() {
 
       if (data.user) {
         // Fetch role from profiles
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("role, full_name, is_active")
           .eq("id", data.user.id)
           .single();
 
-        if (!profile?.is_active) {
+        if (profileError) {
+          await supabase.auth.signOut();
+          toast.error("Profil pengguna belum dapat dibaca. Periksa policy RLS Supabase.");
+          return;
+        }
+
+        if (!profile || !profile.is_active) {
           await supabase.auth.signOut();
           toast.error("Akun kamu tidak aktif. Hubungi administrator.");
           return;

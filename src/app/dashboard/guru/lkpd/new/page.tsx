@@ -24,12 +24,8 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import type { LKPD, LKPDQuestion } from "@/types";
 
-function generateId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-const defaultQuestion: () => LKPDQuestion = () => ({
-  id: generateId(),
+const defaultQuestion = (id = "question-initial"): LKPDQuestion => ({
+  id,
   question_text: "Jelaskan konsep yang kamu pelajari...",
   question_type: "essay",
   max_points: 10,
@@ -87,7 +83,9 @@ export default function LKPDEditorPage() {
   }, [selectedClass, supabase]);
 
   function addQuestion() {
-    const q = defaultQuestion();
+    // This runs only after hydration, so a deterministic counter is enough
+    // and avoids Math.random() changing SSR markup.
+    const q = defaultQuestion(`question-${questions.length + 1}`);
     setQuestions((prev) => [...prev, q]);
     setExpandedQ((prev) => ({ ...prev, [q.id]: true }));
   }
