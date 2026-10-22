@@ -1,18 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import TopNav from "@/components/layout/TopNav";
 import Link from "next/link";
 import {
   GraduationCap,
-  BookOpen,
   ClipboardCheck,
   Award,
   Clock,
-  CheckCircle,
   TrendingUp,
   ArrowRight,
-  Star,
   Sparkles,
 } from "lucide-react";
 
@@ -20,14 +17,18 @@ export const metadata: Metadata = { title: "Dashboard Siswa" };
 
 export default async function SiswaDashboard() {
   const supabase = await createClient();
+  const adminSupabase = await createAdminClient();
 
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  if (!user) return null;
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("full_name")
-    .eq("id", user!.id)
+    .eq("id", user.id)
     .single();
 
   const [
@@ -38,17 +39,17 @@ export default async function SiswaDashboard() {
     supabase
       .from("kelas_members")
       .select("*", { count: "exact", head: true })
-      .eq("user_id", user!.id)
+      .eq("user_id", user.id)
       .eq("role", "siswa"),
     supabase
       .from("lkpd_submissions")
       .select("*", { count: "exact", head: true })
-      .eq("student_id", user!.id)
+      .eq("student_id", user.id)
       .in("status", ["ai_graded", "validated"]),
     supabase
       .from("lkpd_submissions")
       .select("*", { count: "exact", head: true })
-      .eq("student_id", user!.id)
+      .eq("student_id", user.id)
       .eq("status", "submitted"),
   ]);
 
@@ -58,23 +59,32 @@ export default async function SiswaDashboard() {
       `id, submitted_at, status, ai_score, final_score,
        lkpd:lkpd!lkpd_submissions_lkpd_id_fkey(title, max_score)`
     )
-    .eq("student_id", user!.id)
+    .eq("student_id", user.id)
     .order("submitted_at", { ascending: false })
     .limit(5);
 
-  const { data: classes } = await supabase
+  // Fetch enrolled class IDs
+  const { data: memberRows } = await supabase
     .from("kelas_members")
-    .select(
-      `kelas:kelas!kelas_members_kelas_id_fkey(id, name, subject, semester)`
-    )
-    .eq("user_id", user!.id)
+    .select("kelas_id")
+    .eq("user_id", user.id)
     .eq("role", "siswa")
     .limit(4);
+
+  const classIds = (memberRows || []).map((m: any) => m.kelas_id).filter(Boolean);
+
+  const { data: classes } = classIds.length
+    ? await adminSupabase
+        .from("kelas")
+        .select("id, name, subject, semester, academic_year, is_active")
+        .in("id", classIds)
+        .order("created_at", { ascending: false })
+    : { data: [] };
 
   const { data: scores } = await supabase
     .from("lkpd_submissions")
     .select("final_score")
-    .eq("student_id", user!.id)
+    .eq("student_id", user.id)
     .eq("status", "validated")
     .not("final_score", "is", null);
 
@@ -102,21 +112,23 @@ export default async function SiswaDashboard() {
         {/* Welcome banner */}
         <div className="relative overflow-hidden rounded-2xl p-6 bg-gradient-to-r from-teal-500 to-ai-600 text-white">
           <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full -translate-y-1/3 translate-x-1/4" />
-          <div className="absolute bottom-0 left-1/4 w-32 h-32 bg-indigo-300/20 rounded-full translate-y-1/2" />
+          <div className="absolute bottom-0 right-1/4 w-24 h-24 bg-white/10 rounded-full translate-y-1/2" />
           <div className="relative z-10">
             <div className="flex items-center gap-2 mb-2">
               <GraduationCap className="w-5 h-5 text-white/80" />
-              <span className="text-sm font-medium text-white/80">Portal Mahasiswa</span>
+              <span className="text-sm font-medium text-white/80">
+                Mode Mahasiswa
+              </span>
             </div>
             <h2 className="text-2xl font-extrabold mb-1">
-              Halo, {profile?.full_name?.split(" ")[0] || "Mahasiswa"}! 🎓
+              Halo, {profile?.full_name?.split(" ")[0] || "Siswa"}! 👋
             </h2>
-            <p className="text-white/70 text-sm max-w-md">
+            <p className="text-white/80 text-sm max-w-md">
               Kamu terdaftar di{" "}
-              <strong className="text-white">{enrolledClasses ?? 0} kelas</strong>. Rata-rata
-              nilaimu:{" "}
-              <strong className="text-yellow-200">
-                {avgScore > 0 ? `${avgScore} poin` : "Belum ada nilai"}
+              <strong className="text-white">{enrolledClasses ?? 0} kelas</strong>.
+              Rata-rata nilaimu:{" "}
+              <strong className="text-white">
+                {avgScore > 0 ? `${avgScore}/100` : "Belum ada nilai"}
               </strong>
             </p>
             <Link
@@ -131,31 +143,68 @@ export default async function SiswaDashboard() {
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: "Kelas Diikuti", value: enrolledClasses ?? 0, icon: BookOpen, color: "text-primary-600", bg: "bg-primary-50" },
-            { label: "LKPD Selesai", value: completedLKPD ?? 0, icon: CheckCircle, color: "text-emerald-600", bg: "bg-emerald-50" },
-            { label: "LKPD Menunggu", value: pendingLKPD ?? 0, icon: Clock, color: "text-amber-600", bg: "bg-amber-50" },
-            { label: "Rata-rata Nilai", value: avgScore, icon: Star, color: "text-violet-600", bg: "bg-violet-50" },
+            {
+              label: "Kelas Diikuti",
+              value: enrolledClasses ?? 0,
+              icon: GraduationCap,
+              color: "text-primary-600",
+              bg: "bg-primary-50",
+              href: "/dashboard/siswa/classes",
+            },
+            {
+              label: "LKPD Selesai",
+              value: completedLKPD ?? 0,
+              icon: ClipboardCheck,
+              color: "text-emerald-600",
+              bg: "bg-emerald-50",
+              href: "/dashboard/siswa/lkpd",
+            },
+            {
+              label: "LKPD Menunggu",
+              value: pendingLKPD ?? 0,
+              icon: Clock,
+              color: "text-amber-600",
+              bg: "bg-amber-50",
+              href: "/dashboard/siswa/lkpd",
+            },
+            {
+              label: "Rata-rata Nilai",
+              value: avgScore > 0 ? avgScore : 0,
+              icon: Award,
+              color: "text-ai-600",
+              bg: "bg-ai-50",
+              href: "/dashboard/siswa/grades",
+            },
           ].map((s) => (
-            <div key={s.label} className="stat-card">
-              <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center`}>
-                <s.icon className={`w-5 h-5 ${s.color}`} />
+            <Link
+              key={s.label}
+              href={s.href}
+              className="stat-card hover:no-underline group"
+            >
+              <div className="flex items-center justify-between">
+                <div
+                  className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center`}
+                >
+                  <s.icon className={`w-5 h-5 ${s.color}`} />
+                </div>
+                <TrendingUp className="w-4 h-4 text-neutral-300 group-hover:text-primary-400 transition-colors" />
               </div>
               <p className="text-3xl font-extrabold text-neutral-900">{s.value}</p>
               <p className="text-sm font-semibold text-neutral-600">{s.label}</p>
-            </div>
+            </Link>
           ))}
         </div>
 
-        {/* Content grid */}
+        {/* Content Grid */}
         <div className="grid lg:grid-cols-5 gap-6">
-          {/* Recent submissions */}
+          {/* Recent LKPD */}
           <div className="lg:col-span-3 card-flat rounded-2xl overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-neutral-100">
-              <div>
-                <h3 className="font-bold text-neutral-900">Riwayat LKPD</h3>
-                <p className="text-xs text-neutral-400 mt-0.5">Tugas yang sudah dikumpulkan</p>
-              </div>
-              <Link href="/dashboard/siswa/lkpd" className="btn-secondary text-xs py-2 px-3">
+              <h3 className="font-bold text-neutral-900">Riwayat LKPD</h3>
+              <Link
+                href="/dashboard/siswa/lkpd"
+                className="btn-ghost text-xs py-1.5 px-3"
+              >
                 <ClipboardCheck className="w-3.5 h-3.5" />
                 Semua LKPD
               </Link>
@@ -163,40 +212,47 @@ export default async function SiswaDashboard() {
             <div className="divide-y divide-neutral-100">
               {recentSubs && recentSubs.length > 0 ? (
                 (recentSubs as any[]).map((sub) => {
-                  const info = statusInfo[sub.status] || {
-                    label: sub.status,
-                    class: "badge-neutral",
-                  };
-                  const lkpd = Array.isArray(sub.lkpd) ? sub.lkpd[0] : sub.lkpd;
+                  const lkpd = Array.isArray(sub.lkpd)
+                    ? sub.lkpd[0]
+                    : sub.lkpd;
+                  const status =
+                    statusInfo[sub.status] || statusInfo.submitted;
+
                   return (
                     <div
                       key={sub.id}
                       className="flex items-center justify-between p-4 hover:bg-neutral-50 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-primary-50 flex items-center justify-center">
-                          <ClipboardCheck className="w-4 h-4 text-primary-600" />
+                        <div className="w-9 h-9 rounded-xl bg-ai-50 flex items-center justify-center">
+                          <ClipboardCheck className="w-4 h-4 text-ai-600" />
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-neutral-900">
                             {lkpd?.title || "LKPD"}
                           </p>
                           <p className="text-xs text-neutral-400">
-                            {new Date(sub.submitted_at).toLocaleString("id-ID", {
-                              dateStyle: "short",
-                              timeStyle: "short",
-                            })}
+                            Dikumpulkan:{" "}
+                            {new Date(sub.submitted_at).toLocaleDateString(
+                              "id-ID",
+                              {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              }
+                            )}
                           </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <span className={`badge text-xs ${info.class}`}>{info.label}</span>
-                        {sub.final_score != null ? (
-                          <p className="text-xs text-amber-600 font-bold mt-1 flex items-center gap-1 justify-end">
-                            <Star className="w-3 h-3" />
+                        <span className={`badge text-xs ${status.class}`}>
+                          {status.label}
+                        </span>
+                        {sub.final_score !== null && sub.final_score !== undefined ? (
+                          <p className="text-xs font-bold text-emerald-600 mt-1">
                             {sub.final_score}/{lkpd?.max_score}
                           </p>
-                        ) : sub.ai_score != null ? (
+                        ) : sub.ai_score ? (
                           <p className="text-xs text-ai-600 font-semibold mt-1 flex items-center gap-1 justify-end">
                             <Sparkles className="w-3 h-3" />
                             {sub.ai_score}/{lkpd?.max_score}
@@ -216,9 +272,8 @@ export default async function SiswaDashboard() {
             </div>
           </div>
 
-          {/* Right column */}
+          {/* Right column: Enrolled classes & quick stats */}
           <div className="lg:col-span-2 space-y-4">
-            {/* Classes */}
             <div className="card-flat rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-neutral-900">Kelas Saya</h3>
@@ -231,12 +286,11 @@ export default async function SiswaDashboard() {
               </div>
               <div className="space-y-2">
                 {classes && classes.length > 0 ? (
-                  (classes as any[]).map((c, index) => {
-                    const kelas = Array.isArray(c.kelas) ? c.kelas[0] : c.kelas;
+                  classes.map((kelas: any, index: number) => {
                     if (!kelas?.id) return null;
                     return (
                       <Link
-                        key={c.kelas_id ?? kelas.id ?? `class-${index}`}
+                        key={kelas.id ?? `class-${index}`}
                         href={`/dashboard/siswa/classes/${kelas.id}`}
                         className="flex items-center gap-3 p-3 rounded-xl hover:bg-neutral-50 transition-colors group"
                       >
@@ -247,73 +301,53 @@ export default async function SiswaDashboard() {
                           <p className="text-sm font-semibold text-neutral-900 truncate">
                             {kelas?.name}
                           </p>
-                          <p className="text-xs text-neutral-400">{kelas?.subject}</p>
+                          <p className="text-xs text-neutral-400">
+                            {kelas?.subject} · Sem. {kelas?.semester}
+                          </p>
                         </div>
-                        <ArrowRight className="w-4 h-4 text-neutral-300 group-hover:text-primary-400 transition-colors shrink-0" />
+                        <ArrowRight className="w-4 h-4 text-neutral-300 group-hover:text-primary-600 group-hover:translate-x-0.5 transition-all" />
                       </Link>
                     );
                   })
                 ) : (
                   <p className="text-sm text-neutral-400 text-center py-4">
-                    Belum terdaftar di kelas manapun
+                    Belum ada kelas
                   </p>
                 )}
               </div>
             </div>
 
-            {/* Progress visual */}
             <div className="card-flat rounded-2xl p-5">
-              <h3 className="font-bold text-neutral-900 mb-4 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-primary-600" />
-                Progres Belajar
-              </h3>
+              <h3 className="font-bold text-neutral-900 mb-4">Progres Belajar</h3>
               <div className="space-y-3">
                 <div>
-                  <div className="flex justify-between text-xs text-neutral-500 mb-1.5">
+                  <div className="flex justify-between text-xs text-neutral-600 mb-1">
                     <span>LKPD Selesai</span>
-                    <span className="font-semibold">
-                      {completedLKPD ?? 0}/
-                      {(completedLKPD ?? 0) + (pendingLKPD ?? 0)}
-                    </span>
+                    <span className="font-semibold">{completedLKPD ?? 0}</span>
                   </div>
-                  <div className="progress-bar">
+                  <div className="w-full bg-neutral-100 rounded-full h-2">
                     <div
-                      className="progress-bar-fill"
+                      className="bg-emerald-500 h-2 rounded-full transition-all"
                       style={{
-                        width: `${
-                          (completedLKPD ?? 0) + (pendingLKPD ?? 0) > 0
-                            ? Math.round(
-                                ((completedLKPD ?? 0) /
-                                  ((completedLKPD ?? 0) + (pendingLKPD ?? 0))) *
-                                  100
-                              )
-                            : 0
-                        }%`,
+                        width: `${Math.min(100, ((completedLKPD ?? 0) / 10) * 100)}%`,
                       }}
                     />
                   </div>
                 </div>
+
                 <div>
-                  <div className="flex justify-between text-xs text-neutral-500 mb-1.5">
+                  <div className="flex justify-between text-xs text-neutral-600 mb-1">
                     <span>Rata-rata Nilai</span>
                     <span className="font-semibold">{avgScore}/100</span>
                   </div>
-                  <div className="progress-bar">
+                  <div className="w-full bg-neutral-100 rounded-full h-2">
                     <div
-                      className="progress-bar-fill"
-                      style={{ width: `${avgScore}%` }}
+                      className="bg-ai-500 h-2 rounded-full transition-all"
+                      style={{ width: `${Math.min(100, avgScore)}%` }}
                     />
                   </div>
                 </div>
               </div>
-
-              <Link
-                href="/dashboard/siswa/grades"
-                className="inline-flex items-center gap-2 mt-4 text-xs text-primary-600 hover:text-primary-700 font-semibold transition-colors"
-              >
-                <Award className="w-3.5 h-3.5" />
-                Lihat Detail Nilai & Feedback AI
-              </Link>
             </div>
           </div>
         </div>

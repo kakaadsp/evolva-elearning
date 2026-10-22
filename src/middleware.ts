@@ -64,7 +64,18 @@ export async function middleware(request: NextRequest) {
 
   // Protected routes — require authentication
   if (!user) {
+    if (pathname.startsWith("/api")) {
+      return NextResponse.json(
+        { error: "Sesi telah berakhir. Silakan login kembali." },
+        { status: 401 }
+      );
+    }
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // API routes handle their own specific RBAC inside the route handlers
+  if (pathname.startsWith("/api")) {
+    return supabaseResponse;
   }
 
   // RBAC: Check role-based access

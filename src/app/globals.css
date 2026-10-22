@@ -294,8 +294,16 @@
 /* Inputs that contain absolutely positioned icons need explicit padding.
    These selectors intentionally live next to .input-field so they cannot be
    overridden by the base input padding when Tailwind utilities are rebuilt. */
-.input-field.input-with-leading-icon { padding-left: 2.75rem; }
-.input-field.input-with-trailing-icon { padding-right: 2.75rem; }
+.input-field.input-with-leading-icon,
+.input-field.pl-9,
+.input-field.pl-10,
+.input-field[class*="pl-9"],
+.input-field[class*="pl-10"] {
+  padding-left: 2.6rem !important;
+}
+.input-field.input-with-trailing-icon {
+  padding-right: 2.75rem !important;
+}
 
 /* ===== BADGES ===== */
 .badge {

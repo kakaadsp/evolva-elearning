@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import TopNav from "@/components/layout/TopNav";
 import toast from "react-hot-toast";
 import {
@@ -23,7 +23,7 @@ import {
 import type { LKPDSubmission, AIFeedback } from "@/types";
 
 type SubmissionWithRelations = LKPDSubmission & {
-  student: { full_name: string; email: string };
+  student?: { full_name?: string; email?: string } | null;
   lkpd: {
     title: string;
     questions: Array<{
@@ -36,7 +36,7 @@ type SubmissionWithRelations = LKPDSubmission & {
   };
 };
 
-export default function GradingPage() {
+function GradingContent() {
   const [submissions, setSubmissions] = useState<SubmissionWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSub, setSelectedSub] = useState<SubmissionWithRelations | null>(null);
@@ -47,22 +47,35 @@ export default function GradingPage() {
   const [expandedAnswers, setExpandedAnswers] = useState<Record<string, boolean>>({});
   const [statusFilter, setStatusFilter] = useState<"all" | "submitted" | "ai_graded" | "validated">("all");
 
-  const supabase = createClient();
+  const searchParams = useSearchParams();
+  const lkpdIdParam = searchParams.get("lkpdId");
 
-  const fetchSubmissions = useCallback(async () => {
+  const fetchSubmissions = useCallback(async (selectedIdToKeep?: string) => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("lkpd_submissions")
-      .select(`
-        *,
-        student:profiles!lkpd_submissions_student_id_fkey(full_name, email),
-        lkpd:lkpd!lkpd_submissions_lkpd_id_fkey(title, questions, max_score)
-      `)
-      .order("submitted_at", { ascending: false });
+    try {
+      const url = lkpdIdParam
+        ? `/api/guru/grading?lkpdId=${encodeURIComponent(lkpdIdParam)}`
+        : "/api/guru/grading";
+      const res = await fetch(url);
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error);
 
-    if (!error && data) setSubmissions(data as SubmissionWithRelations[]);
-    setLoading(false);
-  }, [supabase]);
+      const data: SubmissionWithRelations[] = result.submissions || [];
+      setSubmissions(data);
+
+      setSelectedSub((prev) => {
+        const targetId = selectedIdToKeep || prev?.id;
+        if (!targetId) {
+          return data.length > 0 ? data[0] : null;
+        }
+        return data.find((s) => s.id === targetId) || prev || (data.length > 0 ? data[0] : null);
+      });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Gagal memuat daftar tugas");
+    } finally {
+      setLoading(false);
+    }
+  }, [lkpdIdParam]);
 
   useEffect(() => {
     fetchSubmissions();
@@ -84,18 +97,31 @@ export default function GradingPage() {
           lkpd_title: sub.lkpd.title,
           questions: sub.lkpd.questions,
           answers: sub.answers,
-          student_name: sub.student.full_name,
+          student_name: sub.student?.full_name || "Mahasiswa",
         }),
       });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error);
+      if (!res.ok) throw new Error(result.error || "Gagal menghubungi Groq AI");
       toast.success("✦ Groq AI berhasil mengoreksi tugas!");
-      fetchSubmissions();
-      // Refresh selected
-      const updated = submissions.find((s) => s.id === sub.id);
-      if (updated) setSelectedSub({ ...updated, status: "ai_graded", ai_feedback: result.feedback });
+
+      setSelectedSub((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "ai_graded",
+              ai_score: result.feedback?.total_score,
+              ai_feedback: result.feedback,
+              answers: result.answers || prev.answers,
+            }
+          : null
+      );
+      if (result.feedback?.total_score !== undefined) {
+        setFinalScore(result.feedback.total_score);
+      }
+      fetchSubmissions(sub.id);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Gagal menghubungi Groq AI");
+      fetchSubmissions(sub.id);
     } finally {
       setGrading(false);
     }
@@ -105,22 +131,32 @@ export default function GradingPage() {
     if (!selectedSub) return;
     setValidating(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase
-        .from("lkpd_submissions")
-        .update({
-          status: "validated",
+      const res = await fetch("/api/guru/grading", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_id: selectedSub.id,
           final_score: finalScore,
           teacher_notes: teacherNotes,
-          validated_by: user?.id,
-          validated_at: new Date().toISOString(),
-        })
-        .eq("id", selectedSub.id);
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Gagal menyimpan nilai");
 
-      if (error) throw error;
-      toast.success(`Nilai ${selectedSub.student.full_name} berhasil divalidasi: ${finalScore} poin`);
-      fetchSubmissions();
-      setSelectedSub(null);
+      const studentName = selectedSub.student?.full_name || "Mahasiswa";
+      toast.success(`Nilai ${studentName} berhasil divalidasi: ${finalScore} poin`);
+
+      setSelectedSub((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "validated",
+              final_score: finalScore,
+              teacher_notes: teacherNotes,
+            }
+          : null
+      );
+      fetchSubmissions(selectedSub.id);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Gagal menyimpan nilai");
     } finally {
@@ -200,11 +236,11 @@ export default function GradingPage() {
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-600 font-bold text-xs shrink-0">
-                          {sub.student?.full_name?.charAt(0) || "?"}
+                          {sub.student?.full_name?.charAt(0) || "M"}
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-neutral-900 leading-none">
-                            {sub.student?.full_name}
+                            {sub.student?.full_name || "Mahasiswa"}
                           </p>
                           <p className="text-xs text-neutral-400 mt-0.5">{sub.lkpd?.title}</p>
                         </div>
@@ -259,7 +295,7 @@ export default function GradingPage() {
                   <div className="flex items-center gap-3 mt-1">
                     <span className="flex items-center gap-1 text-xs text-neutral-500">
                       <User className="w-3 h-3" />
-                      {selectedSub.student?.full_name}
+                      {selectedSub.student?.full_name || "Mahasiswa"}
                     </span>
                     <span className="flex items-center gap-1 text-xs text-neutral-400">
                       <FileText className="w-3 h-3" />
@@ -269,17 +305,20 @@ export default function GradingPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   {/* AI Grade button */}
-                  {selectedSub.status === "submitted" && (
+                  {selectedSub.status !== "validated" && (
                     <button
                       onClick={() => runAIGrading(selectedSub)}
                       disabled={grading}
-                      className="btn-ai"
+                      className="btn-ai text-xs py-2 px-3.5"
                       id="run-ai-grading"
                     >
                       {grading ? (
                         <><div className="spinner !border-white/30 !border-t-white" /> Menganalisis...</>
                       ) : (
-                        <><Sparkles className="w-4 h-4" /> Koreksi dengan AI</>
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          {selectedSub.status === "ai_graded" ? "Koreksi Ulang AI" : "Koreksi dengan AI"}
+                        </>
                       )}
                     </button>
                   )}
@@ -353,18 +392,31 @@ export default function GradingPage() {
                     </h4>
 
                     {!aiFeedback ? (
-                      <div className="flex flex-col items-center justify-center h-48 bg-neutral-50 rounded-2xl border-2 border-dashed border-neutral-200">
+                      <div className="flex flex-col items-center justify-center p-8 bg-neutral-50 rounded-2xl border-2 border-dashed border-neutral-200 text-center">
                         {grading ? (
                           <>
                             <div className="spinner !w-8 !h-8 !border-2 !border-ai-200 !border-t-ai-600 mb-3" />
-                            <p className="text-sm text-ai-600 font-medium">Groq AI sedang menganalisis...</p>
-                            <p className="text-xs text-neutral-400 mt-1">Biasanya &lt; 3 detik</p>
+                            <p className="text-sm text-ai-600 font-semibold">Groq AI sedang menganalisis...</p>
+                            <p className="text-xs text-neutral-400 mt-1">Estimasi waktu 2-3 detik</p>
                           </>
                         ) : (
                           <>
-                            <Sparkles className="w-8 h-8 text-neutral-300 mb-2" />
-                            <p className="text-sm text-neutral-400">Klik &apos;Koreksi dengan AI&apos;</p>
-                            <p className="text-xs text-neutral-300 mt-1">untuk memulai analisis otomatis</p>
+                            <div className="w-12 h-12 rounded-2xl bg-ai-50 flex items-center justify-center text-ai-600 mb-3">
+                              <Sparkles className="w-6 h-6" />
+                            </div>
+                            <p className="text-sm font-bold text-neutral-800">Mulai Analisis Groq AI</p>
+                            <p className="text-xs text-neutral-400 max-w-xs mt-1 mb-4">
+                              AI akan mengoreksi semua jawaban mahasiswa secara otomatis berdasarkan rubrik & konsep matematika.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => runAIGrading(selectedSub)}
+                              disabled={grading}
+                              className="btn-ai text-xs py-2 px-4 shadow-sm"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              Koreksi dengan Groq AI
+                            </button>
                           </>
                         )}
                       </div>
@@ -509,5 +561,19 @@ export default function GradingPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function GradingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-8 flex items-center justify-center min-h-[400px]">
+          <div className="spinner !w-8 !h-8 !border-2 !border-primary-200 !border-t-primary-600" />
+        </div>
+      }
+    >
+      <GradingContent />
+    </Suspense>
   );
 }

@@ -159,9 +159,9 @@ export default async function GuruDashboard() {
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-neutral-900">
-                          {Array.isArray(sub.student)
+                          {(Array.isArray(sub.student)
                             ? sub.student[0]?.full_name
-                            : sub.student?.full_name}
+                            : sub.student?.full_name) || "Mahasiswa"}
                         </p>
                         <p className="text-xs text-neutral-400">
                           {Array.isArray(sub.lkpd)

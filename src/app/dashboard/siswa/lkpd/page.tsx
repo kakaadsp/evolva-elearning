@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import TopNav from "@/components/layout/TopNav";
 import Link from "next/link";
 import {
@@ -20,11 +20,16 @@ export default async function SiswaLKPDPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: enrollments } = await supabase
+  if (!user) {
+    redirect("/auth/login");
+  }
+
+  const adminSupabase = await createAdminClient();
+
+  const { data: enrollments } = await adminSupabase
     .from("kelas_members")
     .select("kelas_id")
-    .eq("user_id", user!.id)
-    .eq("role", "siswa");
+    .eq("user_id", user.id);
 
   const kelasIds = enrollments?.map((e) => e.kelas_id) || [];
 
@@ -41,22 +46,23 @@ export default async function SiswaLKPDPage() {
   let lkpdList: LkpdItem[] = [];
 
   if (kelasIds.length > 0) {
-    const { data: moduls } = await supabase
+    const { data: moduls } = await adminSupabase
       .from("modul_pembelajaran")
-      .select("id")
+      .select("id, title, kelas_id, kelas:kelas!modul_pembelajaran_kelas_id_fkey(name)")
       .in("kelas_id", kelasIds);
 
     const modulIds = moduls?.map((m) => m.id) || [];
+    const modulMap = new Map(
+      (moduls || []).map((m: any) => {
+        const kelas = Array.isArray(m.kelas) ? m.kelas[0] : m.kelas;
+        return [m.id, { title: m.title, kelas }];
+      })
+    );
 
     if (modulIds.length > 0) {
-      const { data } = await supabase
+      const { data } = await adminSupabase
         .from("lkpd")
-        .select(
-          `id, title, description, max_score, deadline, modul_id,
-           modul:modul_pembelajaran!lkpd_modul_id_fkey(
-             title, kelas:kelas!modul_pembelajaran_kelas_id_fkey(name)
-           )`
-        )
+        .select("id, title, description, max_score, deadline, modul_id")
         .in("modul_id", modulIds)
         .eq("is_available", true)
         .order("created_at", { ascending: false });
@@ -72,15 +78,14 @@ export default async function SiswaLKPDPage() {
         const subMap = new Map(submissions?.map((s) => [s.lkpd_id, s]) || []);
 
         lkpdList = (data as any[]).map((l) => {
-          const modul = Array.isArray(l.modul) ? l.modul[0] : l.modul;
-          const kelas = modul ? (Array.isArray(modul.kelas) ? modul.kelas[0] : modul.kelas) : null;
+          const modulInfo = modulMap.get(l.modul_id) || null;
           return {
             id: l.id,
             title: l.title,
             description: l.description,
             max_score: l.max_score,
             deadline: l.deadline,
-            modul: modul ? { title: modul.title, kelas } : null,
+            modul: modulInfo,
             submission: (subMap.get(l.id) as LkpdItem["submission"]) || null,
           };
         });

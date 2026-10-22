@@ -157,7 +157,11 @@ ALTER TABLE public.kelas_members ENABLE ROW LEVEL SECURITY;
 CREATE OR REPLACE FUNCTION public.is_class_teacher(p_kelas_id UUID)
 RETURNS BOOLEAN LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM public.kelas_members WHERE kelas_id = p_kelas_id AND user_id = auth.uid() AND role = 'guru');
+  SELECT EXISTS (
+    SELECT 1 FROM public.kelas_members WHERE kelas_id = p_kelas_id AND user_id = auth.uid() AND role = 'guru'
+  ) OR EXISTS (
+    SELECT 1 FROM public.kelas WHERE id = p_kelas_id AND created_by = auth.uid()
+  );
 $$;
 
 CREATE POLICY "Members can view class membership" ON public.kelas_members
